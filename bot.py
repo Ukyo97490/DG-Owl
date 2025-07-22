@@ -1,71 +1,49 @@
 import os
-import json
 import discord
-from discord.ext import tasks, commands
-import feedparser
+from discord.ext import commands
 from dotenv import load_dotenv
 
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-
-RSS_FEEDS = [
-    "https://korben.info/feed",
-    "https://www.clubic.com/rss",
-    "https://www.lemondeinformatique.fr/flux-rss/thematique/rss.xml"
-]
-
-HISTORY_FILE = "posted.json"
+TOKEN = os.getenv("TOKEN")
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # Peut être None
 
 intents = discord.Intents.default()
+intents.messages = True
+intents.guilds = True
+
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-def load_history():
-    if not os.path.exists(HISTORY_FILE):
-        return {}
-    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_history(history):
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2, ensure_ascii=False)
-
-async def fetch_and_post_news():
-    channel = bot.get_channel(CHANNEL_ID)
-    history = load_history()
-
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
-        if not feed.entries:
-            continue
-        latest = feed.entries[0]
-        link = latest.link
-
-        if history.get(feed_url) == link:
-            continue
-
-        await channel.send(f"📰 **{latest.title}**\n{link}")
-
-        history[feed_url] = link
-        save_history(history)
 
 @bot.event
 async def on_ready():
-    print(f"✅ Connecté en tant que {bot.user}")
-    fetch_news.start()
+    print(f"✅ Connecté en tant que {bot.user.name}")
 
-@tasks.loop(minutes=60)
-async def fetch_news():
-    await fetch_and_post_news()
+    for guild in bot.guilds:
+        channel = None
 
-@bot.command(name="veille")
-async def veille_refresh(ctx, arg=None):
-    if arg == "refresh":
-        await ctx.send("🔄 Mise à jour manuelle en cours...")
-        await fetch_and_post_news()
-        await ctx.send("✅ Mise à jour terminée !")
-    else:
-        await ctx.send("Commande invalide. Utilisez `!veille refresh` pour mettre à jour.")
+        # Si CHANNEL_ID est défini
+        if CHANNEL_ID:
+            try:
+                channel = guild.get_channel(int(CHANNEL_ID))
+                print(f"📌 Salon trouvé par ID : {channel.name}")
+            except Exception as e:
+                print(f"⚠️ Erreur lors de la récupération du salon par ID : {e}")
+
+        # Sinon, on tente de le retrouver par nom
+        if not channel:
+            channel = discord.utils.get(guild.text_channels, name="veille-technologique")
+            if channel:
+                print(f"📌 Salon trouvé par nom : {channel.name}")
+            else:
+                # Sinon, on le crée
+                print("➕ Création du salon veille-technologique")
+                overwrites = {
+                    guild.default_role: discord.PermissionOverwrite(read_messages=True)
+                }
+                channel = await guild.create_text_channel("veille-technologique", overwrites=overwrites)
+                print(f"✅ Salon créé : {channel.name} (ID: {channel.id})")
+
+        # Tu peux maintenant poster dans ce salon
+        await channel.send("🤖 Le bot est prêt à suivre l'actualité technologique !")
 
 bot.run(TOKEN)
